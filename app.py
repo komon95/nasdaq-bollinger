@@ -12,26 +12,116 @@ import pandas as pd
 
 st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide", initial_sidebar_state="collapsed")
 
-# [모바일 핀치 줌 핵심] 폰에서 두 손가락 핀치 시 '페이지 전체'가 확대되는 것을 막아야
-# 그 제스처가 차트(Plotly)로 전달되어 차트 확대/축소가 동작한다.
-# Streamlit 본문은 iframe 안에서 실행되므로 JS로 부모 문서의 viewport 메타태그를 수정한다.
+# [모바일 핀치 줌 핵심] 폰에서 두 손가락 핀치 시 '페이지 전체'가 확대되는 것을 막고,
+# 직접 터치 이벤트를 감지해 Plotly 차트를 확대/축소한다.
+# (Plotly 내장 scrollZoom은 마우스 휠 기반이라 터치 핀치를 제대로 처리하지 못함)
+# Streamlit 본문은 iframe 안에서 실행되므로 window.parent 로 부모 문서에 접근한다.
 components.html("""
     <script>
     (function () {
+        var pdoc, pwin;
+        try { pwin = window.parent; pdoc = pwin.document; }
+        catch (e) { return; } // 교차 출처 예외 무시
+
+        // 1) 페이지 전체 확대를 막아 핀치 제스처가 차트로 전달되게 함
         try {
-            var doc = window.parent.document;
-            var meta = doc.querySelector('meta[name="viewport"]');
+            var meta = pdoc.querySelector('meta[name="viewport"]');
             if (!meta) {
-                meta = doc.createElement('meta');
+                meta = pdoc.createElement('meta');
                 meta.name = 'viewport';
-                doc.head.appendChild(meta);
+                pdoc.head.appendChild(meta);
             }
-            // 브라우저 페이지 확대를 막아 핀치 제스처가 차트로 전달되게 함
-            meta.setAttribute(
-                'content',
-                'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'
-            );
-        } catch (e) { /* 교차 출처 등 예외 무시 */ }
+            meta.setAttribute('content',
+                'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        } catch (e) {}
+
+        var Plotly = pwin.Plotly;
+        var pinch = null; // 진행 중인 핀치 상태
+
+        function dist(t1, t2) {
+            var dx = t1.clientX - t2.clientX;
+            var dy = t1.clientY - t2.clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function onStart(e) {
+            if (e.touches.length !== 2) { pinch = null; return; }
+            var gd = e.currentTarget;
+            var fl = gd._fullLayout;
+            if (!fl) return;
+            var xa = fl.xaxis, ya = fl.yaxis;
+            if (!xa || !ya) return;
+            e.preventDefault();
+            pinch = {
+                gd: gd,
+                startDist: dist(e.touches[0], e.touches[1]),
+                // 현재 축 범위를 선형(linear) 좌표로 저장
+                x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
+                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1]),
+                xa: xa, ya: ya
+            };
+        }
+
+        function onMove(e) {
+            if (!pinch || e.touches.length !== 2) return;
+            e.preventDefault();
+            var d = dist(e.touches[0], e.touches[1]);
+            if (d <= 0 || pinch.startDist <= 0) return;
+            var scale = pinch.startDist / d; // >1 축소, <1 확대
+            scale = Math.max(0.05, Math.min(20, scale));
+
+            var gd = pinch.gd;
+            var rect = gd.getBoundingClientRect();
+            var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+            var xa = pinch.xa, ya = pinch.ya;
+            // 핀치 중심을 두 축의 데이터(선형) 좌표로 변환
+            var fx = (cx - rect.left - xa._offset) / xa._length;
+            var fy = (cy - rect.top - ya._offset) / ya._length;
+            fx = Math.max(0, Math.min(1, fx));
+            fy = Math.max(0, Math.min(1, fy));
+
+            var xWidth = (pinch.x1 - pinch.x0) * scale;
+            var yHeight = (pinch.y1 - pinch.y0) * scale;
+            var cxL = pinch.x0 + fx * (pinch.x1 - pinch.x0);
+            var cyL = pinch.y1 - fy * (pinch.y1 - pinch.y0); // y는 위가 큰 값
+
+            var nx0 = cxL - fx * xWidth;
+            var nx1 = cxL + (1 - fx) * xWidth;
+            var ny1 = cyL + fy * yHeight;
+            var ny0 = cyL - (1 - fy) * yHeight;
+
+            Plotly.relayout(gd, {
+                'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
+                'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
+            });
+        }
+
+        function onEnd(e) {
+            if (e.touches.length < 2) pinch = null;
+        }
+
+        function attach(gd) {
+            if (gd._pinchAttached) return;
+            gd._pinchAttached = true;
+            gd.addEventListener('touchstart', onStart, { passive: false });
+            gd.addEventListener('touchmove', onMove, { passive: false });
+            gd.addEventListener('touchend', onEnd, { passive: false });
+            gd.addEventListener('touchcancel', onEnd, { passive: false });
+        }
+
+        // 차트가 렌더링될 때까지(그리고 재실행으로 새로 그려질 때마다) 핸들러 부착
+        function scan() {
+            if (!pwin.Plotly) { Plotly = pwin.Plotly; }
+            Plotly = pwin.Plotly || Plotly;
+            var plots = pdoc.querySelectorAll('.js-plotly-plot');
+            for (var i = 0; i < plots.length; i++) {
+                if (Plotly) attach(plots[i]);
+            }
+        }
+        setInterval(scan, 1000);
+        scan();
     })();
     </script>
 """, height=0)
