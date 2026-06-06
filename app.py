@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import plotly.graph_objects as go
 import pandas as pd
@@ -10,6 +11,30 @@ import pandas as pd
 ## 2. 웹 브라우저에서 `https://bollinger.streamlit.app/` 접속
 
 st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide", initial_sidebar_state="collapsed")
+
+# [모바일 핀치 줌 핵심] 폰에서 두 손가락 핀치 시 '페이지 전체'가 확대되는 것을 막아야
+# 그 제스처가 차트(Plotly)로 전달되어 차트 확대/축소가 동작한다.
+# Streamlit 본문은 iframe 안에서 실행되므로 JS로 부모 문서의 viewport 메타태그를 수정한다.
+components.html("""
+    <script>
+    (function () {
+        try {
+            var doc = window.parent.document;
+            var meta = doc.querySelector('meta[name="viewport"]');
+            if (!meta) {
+                meta = doc.createElement('meta');
+                meta.name = 'viewport';
+                doc.head.appendChild(meta);
+            }
+            // 브라우저 페이지 확대를 막아 핀치 제스처가 차트로 전달되게 함
+            meta.setAttribute(
+                'content',
+                'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'
+            );
+        } catch (e) { /* 교차 출처 등 예외 무시 */ }
+    })();
+    </script>
+""", height=0)
 
 # CSS: 마우스 커서 고정 + 모바일 반응형 최적화
 st.markdown("""
@@ -54,7 +79,9 @@ st.markdown("""
         .js-plotly-plot .ytick text {
             font-size: 15px !important;
         }
-        /* 손가락 핀치 줌 제스처를 차트가 가로채도록 (페이지 스크롤 대신 차트 줌) */
+        /* 손가락 핀치 줌 제스처를 차트가 가로채도록 (페이지 스크롤/줌 대신 차트 줌) */
+        .stPlotlyChart,
+        .js-plotly-plot,
         .js-plotly-plot .nsewdrag,
         .js-plotly-plot .draglayer,
         .js-plotly-plot .drag {
