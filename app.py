@@ -134,7 +134,7 @@ else:
         xaxis_title="",
         xaxis_rangeslider_visible=False,
         autosize=True,
-        height=600,
+        height=750,
         template="plotly_white",
         margin=dict(l=10, r=60, t=50, b=30), # 모바일 여백 최소화, 우측 숫자 공간 확보
         
