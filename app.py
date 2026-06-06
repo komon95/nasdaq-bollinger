@@ -1,0 +1,130 @@
+import streamlit as st
+import yfinance as yf
+import plotly.graph_objects as go
+import pandas as pd
+
+# pip install streamlit yfinance plotly pandas
+# python -m streamlit run app.py
+
+st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide")
+
+# CSS: 마우스 커서를 윈도우 기본 화살표로 강제 고정
+st.markdown("""
+    <style>
+    .js-plotly-plot .plotly .nsewdrag { cursor: default !important; }
+    .js-plotly-plot .plotly .cursor-crosshair { cursor: default !important; }
+    .js-plotly-plot .plotly .dragcover { cursor: default !important; }
+    .js-plotly-plot .plotly rect { cursor: default !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("📈 나스닥 100 & 코스피 볼린저 밴드 차트")
+
+st.sidebar.header("차트 설정")
+index_choice = st.sidebar.selectbox("지수 선택", ["나스닥 100 (NDX)", "코스피 (KOSPI)"])
+period_choice = st.sidebar.selectbox("차트 주기", ["일봉 (Daily)", "주봉 (Weekly)", "월봉 (Monthly)"])
+
+ticker_dict = {"나스닥 100 (NDX)": "^NDX", "코스피 (KOSPI)": "^KS11"}
+interval_dict = {"일봉 (Daily)": "1d", "주봉 (Weekly)": "1wk", "월봉 (Monthly)": "1mo"}
+
+ticker = ticker_dict[index_choice]
+interval = interval_dict[period_choice]
+data_period = "5y" if interval == "1mo" else "2y"
+
+@st.cache_data(ttl=600)  # 600초가 지나면 기존 캐시를 버리고 최신 데이터를 다시 불러옴
+def load_data(ticker, period, interval):
+    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    return df
+
+data = load_data(ticker, data_period, interval)
+
+if data.empty:
+    st.error("데이터를 불러오지 못했습니다.")
+else:
+    data['SMA'] = data['Close'].rolling(window=20).mean()
+    data['STD'] = data['Close'].rolling(window=20).std()
+    data['Upper'] = data['SMA'] + (data['STD'] * 2)
+    data['Lower'] = data['SMA'] - (data['STD'] * 2)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
+        name='캔들',
+        increasing_line_color='#00b074', increasing_fillcolor='#00b074',
+        decreasing_line_color='#ff5a5a', decreasing_fillcolor='#ff5a5a',
+        # 툴팁 안의 폰트도 가독성 있게 유지
+        hovertemplate="<b>%{x|%Y년 %m월 %d일}</b><br>%{close:,.2f}<extra></extra>"
+    ))
+
+    fig.add_trace(go.Scatter(x=data.index, y=data['Upper'], line=dict(color='#00c49f', width=1), name='상한선', hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=data.index, y=data['Lower'], line=dict(color='#00c49f', width=1), fill='tonexty', fillcolor='rgba(0, 196, 159, 0.04)', name='하한선', hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=data.index, y=data['SMA'], line=dict(color='#4285f4', width=1), name='중심선', hoverinfo='skip'))
+
+    min_date = data.index.min()
+    max_date = data.index.max()
+    monthly_dates = pd.date_range(start=min_date, end=max_date, freq='MS')
+    tick_vals = monthly_dates
+    tick_texts = [f"{d.year}년 {d.month}월" if d.month == 1 else f"{d.month}월" for d in monthly_dates]
+
+    fig.update_layout(
+        title=f"<b>{index_choice} - {period_choice}</b>",
+        xaxis_title="",
+        xaxis_rangeslider_visible=False,
+        height=750,
+        template="plotly_white",
+        margin=dict(r=70), # 우측 숫자가 커졌으므로 잘리지 않게 여백 추가
+        
+        # [핵심 수정 1] 차트 전체의 글로벌 폰트를 트레이딩뷰 스타일(Roboto, Arial 등)로 변경
+        font=dict(family="-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Arial, sans-serif"),
+        
+        dragmode="pan",      
+        hovermode="x", 
+        
+        hoverlabel=dict(
+            bgcolor="#2a2e39",        
+            bordercolor="#4c525e",    
+            font=dict(color="white", size=14), # 마우스 포인터 툴팁 폰트 크기 확대
+            align="left"
+        ),
+        
+        legend=dict(
+            orientation="v", yanchor="top", y=0.99, xanchor="left", x=0.01,
+            bgcolor="rgba(255, 255, 255, 0.7)"
+        ),
+        
+        # [핵심 수정 2] 우측 Y축 숫자 폰트 크기를 14로 키우고 색상을 진하게 변경
+        yaxis=dict(
+            side="right",
+            tickformat=",.2f", 
+            tickfont=dict(size=14, color="#131722"), # 숫자 가독성 향상
+            showspikes=True, spikemode="across", spikesnap="cursor", 
+            spikedash="dot", spikethickness=1, spikecolor="#787b86"
+        ),
+        
+        xaxis=dict(
+            tickmode='array',
+            tickvals=tick_vals,
+            ticktext=tick_texts,
+            tickfont=dict(size=13, color="#131722"),
+            showspikes=True, spikemode="across", spikesnap="cursor",
+            spikedash="dot", spikethickness=1, spikecolor="#787b86"
+        )
+    )
+
+    # 우측 실시간 현재가/밴드 수치 고정 라벨 박스
+    latest_close = data['Close'].dropna().iloc[-1]
+    latest_upper = data['Upper'].dropna().iloc[-1]
+    latest_lower = data['Lower'].dropna().iloc[-1]
+
+    # [핵심 수정 3] 텍스트를 <b> 태그로 굵게 만들고, size를 키우고, borderpad(내부 여백)를 추가하여 박스를 더 크게 만듦
+    fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_close, text=f"<b>{latest_close:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#4285f4", font=dict(color="white", size=13), borderpad=4)
+    fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_upper, text=f"<b>{latest_upper:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
+    fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_lower, text=f"<b>{latest_lower:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
+
+    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
