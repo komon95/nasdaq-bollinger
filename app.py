@@ -85,9 +85,9 @@ interval_dict = {"일봉 (Daily)": "1d", "주봉 (Weekly)": "1wk", "월봉 (Mont
 
 ticker = ticker_dict[index_choice]
 interval = interval_dict[period_choice]
-data_period = "5y" if interval == "1mo" else "2y"
+data_period = "5y" if interval == "1mo" else "2y" # [komon] 월봉은 5년치, 일/주봉은 2년치 데이터로 충분 (과거 데이터는 차트가 너무 빽빽해지고 모바일에서 가독성 저하)
 
-@st.cache_data(ttl=600)  # 600초가 지나면 기존 캐시를 버리고 최신 데이터를 다시 불러옴
+@st.cache_data(ttl=600)  # [komon] 600초가 지나면 기존 캐시를 버리고 최신 데이터를 다시 불러옴
 def load_data(ticker, period, interval):
     df = yf.download(ticker, period=period, interval=interval, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
@@ -124,6 +124,15 @@ else:
 
     min_date = data.index.min()
     max_date = data.index.max()
+    # [komon] 기본 화면 표시 범위: 일봉일 때만 최근 6개월 (전체 데이터는 2년), 그 외는 전체 표시
+    if interval == "1d":
+        default_start = max_date - pd.DateOffset(months=6)
+        if default_start < min_date:
+            default_start = min_date
+        # [komon] 맨 오른쪽 봉이 잘리지 않도록 우측에 2일 여백 추가
+        default_range = [default_start, max_date + pd.Timedelta(days=2)]
+    else:
+        default_range = None
     # 모바일에서는 x축 라벨이 갉수로 겹치지 않도록 2개월 간격, 데스크톱은 1개월 간격
     monthly_dates = pd.date_range(start=min_date, end=max_date, freq='2MS')
     tick_vals = monthly_dates
@@ -166,6 +175,7 @@ else:
         ),
         
         xaxis=dict(
+            range=default_range,  # 일봉일 때만 최근 6개월, 그 외는 전체 표시
             tickmode='array',
             tickvals=tick_vals,
             ticktext=tick_texts,
