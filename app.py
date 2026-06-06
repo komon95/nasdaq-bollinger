@@ -32,24 +32,43 @@ st.markdown("""
     @media (max-width: 640px) {
         .block-container {
             padding-top: 3rem;
-            padding-bottom: 0.5rem;
-            padding-left: 0.5rem;
-            padding-right: 0.5rem;
+            padding-bottom: 0.3rem;
+            padding-left: 0.3rem;
+            padding-right: 0.3rem;
         }
         /* 제목 글자 크기 축소 */
         h1 {
-            font-size: 1.25rem !important;
+            font-size: 1.15rem !important;
             line-height: 1.3 !important;
+            margin-bottom: 0.3rem !important;
         }
-        /* 차트가 화면 가로폭을 꽉 채우도록 */
-        .stPlotlyChart, .js-plotly-plot, .plotly, .plot-container {
-            width: 100% !important;
-        }
-        /* 가로:세로 = 4:3 비율을 유지하여 차트가 세로로 길쭉해지지 않도록 고정 */
+        /* 세로 화면: 차트가 화면을 꽉 채워 크고 보기 좋게 (작게 보이던 문제 해결) */
         .stPlotlyChart, .stPlotlyChart > div,
         .js-plotly-plot, .plot-container, .svg-container {
-            height: auto !important;
-            aspect-ratio: 4 / 3 !important;
+            width: 100% !important;
+            height: 80vh !important;
+            min-height: 520px !important;
+        }
+        /* 축 숫자/날짜 폰트를 키워 고해상도 폰에서도 잘 보이도록 */
+        .js-plotly-plot .xtick text,
+        .js-plotly-plot .ytick text {
+            font-size: 15px !important;
+        }
+        /* 손가락 핀치 줌 제스처를 차트가 가로채도록 (페이지 스크롤 대신 차트 줌) */
+        .js-plotly-plot .nsewdrag,
+        .js-plotly-plot .draglayer,
+        .js-plotly-plot .drag {
+            touch-action: none !important;
+        }
+    }
+
+    /* 가로 화면(landscape) 폰: 화면 높이에 맞춰 적당히 */
+    @media (max-width: 900px) and (orientation: landscape) {
+        .stPlotlyChart, .stPlotlyChart > div,
+        .js-plotly-plot, .plot-container, .svg-container {
+            width: 100% !important;
+            height: 88vh !important;
+            min-height: 320px !important;
         }
     }
     </style>
