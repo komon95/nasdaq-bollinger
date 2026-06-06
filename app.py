@@ -74,7 +74,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 나스닥 100 & 코스피 볼린저 밴드 차트")
+st.title("📈 Bollinger Bands chart")
 
 st.sidebar.header("차트 설정")
 index_choice = st.sidebar.selectbox("지수 선택", ["나스닥 100 (NDX)", "코스피 (KOSPI)"])
