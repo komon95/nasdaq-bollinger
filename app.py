@@ -4,17 +4,54 @@ import plotly.graph_objects as go
 import pandas as pd
 
 # pip install streamlit yfinance plotly pandas
-# python -m streamlit run app.py
 
-st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide")
+# 실행 방법:
+## 1. 터미널에서 `python -m streamlit run app.py` 명령어로 앱 실행
+## 2. 웹 브라우저에서 `https://bollinger.streamlit.app/` 접속
 
-# CSS: 마우스 커서를 윈도우 기본 화살표로 강제 고정
+st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide", initial_sidebar_state="collapsed")
+
+# CSS: 마우스 커서 고정 + 모바일 반응형 최적화
 st.markdown("""
     <style>
+    /* 마우스 커서를 윈도우 기본 화살표로 강제 고정 */
     .js-plotly-plot .plotly .nsewdrag { cursor: default !important; }
     .js-plotly-plot .plotly .cursor-crosshair { cursor: default !important; }
     .js-plotly-plot .plotly .dragcover { cursor: default !important; }
     .js-plotly-plot .plotly rect { cursor: default !important; }
+
+    /* 데스크톱/공통: 본문 좌우 여백 축소로 차트 영역 최대화 */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 1rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
+
+    /* 모바일 화면 (가로폭 640px 이하) 최적화 */
+    @media (max-width: 640px) {
+        .block-container {
+            padding-top: 3rem;
+            padding-bottom: 0.5rem;
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+        /* 제목 글자 크기 축소 */
+        h1 {
+            font-size: 1.25rem !important;
+            line-height: 1.3 !important;
+        }
+        /* 차트가 화면 가로폭을 꽉 채우도록 */
+        .stPlotlyChart, .js-plotly-plot, .plotly, .plot-container {
+            width: 100% !important;
+        }
+        /* 가로:세로 = 4:3 비율을 유지하여 차트가 세로로 길쭉해지지 않도록 고정 */
+        .stPlotlyChart, .stPlotlyChart > div,
+        .js-plotly-plot, .plot-container, .svg-container {
+            height: auto !important;
+            aspect-ratio: 4 / 3 !important;
+        }
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -68,17 +105,19 @@ else:
 
     min_date = data.index.min()
     max_date = data.index.max()
-    monthly_dates = pd.date_range(start=min_date, end=max_date, freq='MS')
+    # 모바일에서는 x축 라벨이 갉수로 겹치지 않도록 2개월 간격, 데스크톱은 1개월 간격
+    monthly_dates = pd.date_range(start=min_date, end=max_date, freq='2MS')
     tick_vals = monthly_dates
-    tick_texts = [f"{d.year}년 {d.month}월" if d.month == 1 else f"{d.month}월" for d in monthly_dates]
+    tick_texts = [f"{d.year}년 {d.month}월" if d.month <= 2 else f"{d.month}월" for d in monthly_dates]
 
     fig.update_layout(
         title=f"<b>{index_choice} - {period_choice}</b>",
         xaxis_title="",
         xaxis_rangeslider_visible=False,
-        height=750,
+        autosize=True,
+        height=600,
         template="plotly_white",
-        margin=dict(r=70), # 우측 숫자가 커졌으므로 잘리지 않게 여백 추가
+        margin=dict(l=10, r=60, t=50, b=30), # 모바일 여백 최소화, 우측 숫자 공간 확보
         
         # [핵심 수정 1] 차트 전체의 글로벌 폰트를 트레이딩뷰 스타일(Roboto, Arial 등)로 변경
         font=dict(family="-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Arial, sans-serif"),
@@ -127,4 +166,13 @@ else:
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_upper, text=f"<b>{latest_upper:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_lower, text=f"<b>{latest_lower:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
 
-    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            'scrollZoom': True,
+            'displayModeBar': False,
+            'responsive': True,        # 화면 크기 변경 시 차트 자동 재조정 (모바일 필수)
+            'doubleClick': 'reset',    # 더블탭/더블터치로 원래 뷰로 리셋
+        }
+    )
