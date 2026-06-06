@@ -12,120 +12,6 @@ import pandas as pd
 
 st.set_page_config(page_title="볼린저 밴드 대시보드", layout="wide", initial_sidebar_state="collapsed")
 
-# [모바일 핀치 줌 핵심] 폰에서 두 손가락 핀치 시 '페이지 전체'가 확대되는 것을 막고,
-# 직접 터치 이벤트를 감지해 Plotly 차트를 확대/축소한다.
-# (Plotly 내장 scrollZoom은 마우스 휠 기반이라 터치 핀치를 제대로 처리하지 못함)
-# Streamlit 본문은 iframe 안에서 실행되므로 window.parent 로 부모 문서에 접근한다.
-components.html("""
-    <script>
-    (function () {
-        var pdoc, pwin;
-        try { pwin = window.parent; pdoc = pwin.document; }
-        catch (e) { return; } // 교차 출처 예외 무시
-
-        // 1) 페이지 전체 확대를 막아 핀치 제스처가 차트로 전달되게 함
-        try {
-            var meta = pdoc.querySelector('meta[name="viewport"]');
-            if (!meta) {
-                meta = pdoc.createElement('meta');
-                meta.name = 'viewport';
-                pdoc.head.appendChild(meta);
-            }
-            meta.setAttribute('content',
-                'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-        } catch (e) {}
-
-        var Plotly = pwin.Plotly;
-        var pinch = null; // 진행 중인 핀치 상태
-
-        function dist(t1, t2) {
-            var dx = t1.clientX - t2.clientX;
-            var dy = t1.clientY - t2.clientY;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-
-        function onStart(e) {
-            if (e.touches.length !== 2) { pinch = null; return; }
-            var gd = e.currentTarget;
-            var fl = gd._fullLayout;
-            if (!fl) return;
-            var xa = fl.xaxis, ya = fl.yaxis;
-            if (!xa || !ya) return;
-            e.preventDefault();
-            pinch = {
-                gd: gd,
-                startDist: dist(e.touches[0], e.touches[1]),
-                // 현재 축 범위를 선형(linear) 좌표로 저장
-                x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
-                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1]),
-                xa: xa, ya: ya
-            };
-        }
-
-        function onMove(e) {
-            if (!pinch || e.touches.length !== 2) return;
-            e.preventDefault();
-            var d = dist(e.touches[0], e.touches[1]);
-            if (d <= 0 || pinch.startDist <= 0) return;
-            var scale = pinch.startDist / d; // >1 축소, <1 확대
-            scale = Math.max(0.05, Math.min(20, scale));
-
-            var gd = pinch.gd;
-            var rect = gd.getBoundingClientRect();
-            var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-            var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-
-            var xa = pinch.xa, ya = pinch.ya;
-            // 핀치 중심을 두 축의 데이터(선형) 좌표로 변환
-            var fx = (cx - rect.left - xa._offset) / xa._length;
-            var fy = (cy - rect.top - ya._offset) / ya._length;
-            fx = Math.max(0, Math.min(1, fx));
-            fy = Math.max(0, Math.min(1, fy));
-
-            var xWidth = (pinch.x1 - pinch.x0) * scale;
-            var yHeight = (pinch.y1 - pinch.y0) * scale;
-            var cxL = pinch.x0 + fx * (pinch.x1 - pinch.x0);
-            var cyL = pinch.y1 - fy * (pinch.y1 - pinch.y0); // y는 위가 큰 값
-
-            var nx0 = cxL - fx * xWidth;
-            var nx1 = cxL + (1 - fx) * xWidth;
-            var ny1 = cyL + fy * yHeight;
-            var ny0 = cyL - (1 - fy) * yHeight;
-
-            Plotly.relayout(gd, {
-                'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
-                'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
-            });
-        }
-
-        function onEnd(e) {
-            if (e.touches.length < 2) pinch = null;
-        }
-
-        function attach(gd) {
-            if (gd._pinchAttached) return;
-            gd._pinchAttached = true;
-            gd.addEventListener('touchstart', onStart, { passive: false });
-            gd.addEventListener('touchmove', onMove, { passive: false });
-            gd.addEventListener('touchend', onEnd, { passive: false });
-            gd.addEventListener('touchcancel', onEnd, { passive: false });
-        }
-
-        // 차트가 렌더링될 때까지(그리고 재실행으로 새로 그려질 때마다) 핸들러 부착
-        function scan() {
-            if (!pwin.Plotly) { Plotly = pwin.Plotly; }
-            Plotly = pwin.Plotly || Plotly;
-            var plots = pdoc.querySelectorAll('.js-plotly-plot');
-            for (var i = 0; i < plots.length; i++) {
-                if (Plotly) attach(plots[i]);
-            }
-        }
-        setInterval(scan, 1000);
-        scan();
-    })();
-    </script>
-""", height=0)
-
 # CSS: 마우스 커서 고정 + 모바일 반응형 최적화
 st.markdown("""
     <style>
@@ -302,13 +188,112 @@ else:
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_upper, text=f"<b>{latest_upper:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_lower, text=f"<b>{latest_lower:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
+    # 차트가 iframe(컨테이너)을 꽉 채우도록 고정 높이를 제거하고 자동 크기 사용
+    fig.update_layout(height=None, autosize=True)
+
+    # [모바일 핀치 줌 핵심 해결]
+    # 차트를 '내가 완전히 제어하는 iframe' 안에 직접 렌더링한다.
+    # 이렇게 하면 같은 출처(same-origin)라 터치 이벤트를 자유롭게 가로채
+    # 두 손가락 핀치 확대/축소를 직접 구현할 수 있다.
+    # (Plotly 내장 scrollZoom 은 마우스 휠 기반이라 모바일 핀치를 처리하지 못함)
+    chart_div = fig.to_html(
+        include_plotlyjs="cdn",
+        full_html=False,
+        div_id="bollingerChart",
         config={
-            'scrollZoom': True,
-            'displayModeBar': False,
-            'responsive': True,        # 화면 크기 변경 시 차트 자동 재조정 (모바일 필수)
-            'doubleClick': 'reset',    # 더블탭/더블터치로 원래 뷰로 리셋
-        }
+            "scrollZoom": True,
+            "displayModeBar": False,
+            "responsive": True,
+            "doubleClick": "reset",
+        },
     )
+
+    full_html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    /* 차트가 iframe 영역을 꽉 채우고, 터치 제스처를 직접 처리 */
+    #bollingerChart { width: 100%; height: 100%; touch-action: none; }
+    .js-plotly-plot, .plot-container, .svg-container { width: 100% !important; height: 100% !important; }
+</style>
+</head>
+<body>
+""" + chart_div + """
+<script>
+(function () {
+    function dist(a, b) {
+        var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+    function attach() {
+        var gd = document.getElementById('bollingerChart');
+        if (!gd || !window.Plotly || !gd._fullLayout) { setTimeout(attach, 300); return; }
+        if (gd._pinchAttached) return;
+        gd._pinchAttached = true;
+
+        var pinch = null;
+
+        gd.addEventListener('touchstart', function (e) {
+            if (e.touches.length !== 2) { pinch = null; return; }
+            var fl = gd._fullLayout;
+            var xa = fl.xaxis, ya = fl.yaxis;
+            if (!xa || !ya) return;
+            e.preventDefault();
+            pinch = {
+                startDist: dist(e.touches[0], e.touches[1]),
+                x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
+                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1]),
+                xa: xa, ya: ya
+            };
+        }, { passive: false });
+
+        gd.addEventListener('touchmove', function (e) {
+            if (!pinch || e.touches.length !== 2) return;
+            e.preventDefault();
+            var d = dist(e.touches[0], e.touches[1]);
+            if (d <= 0 || pinch.startDist <= 0) return;
+            var scale = pinch.startDist / d;            // >1 축소, <1 확대
+            scale = Math.max(0.05, Math.min(20, scale));
+
+            var rect = gd.getBoundingClientRect();
+            var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+            var xa = pinch.xa, ya = pinch.ya;
+            var fx = (cx - rect.left - xa._offset) / xa._length;
+            var fy = (cy - rect.top - ya._offset) / ya._length;
+            fx = Math.max(0, Math.min(1, fx));
+            fy = Math.max(0, Math.min(1, fy));
+
+            var xW = (pinch.x1 - pinch.x0) * scale;
+            var yH = (pinch.y1 - pinch.y0) * scale;
+            var cxL = pinch.x0 + fx * (pinch.x1 - pinch.x0);
+            var cyL = pinch.y1 - fy * (pinch.y1 - pinch.y0);  // y는 위가 큰 값
+
+            var nx0 = cxL - fx * xW,  nx1 = cxL + (1 - fx) * xW;
+            var ny1 = cyL + fy * yH,  ny0 = cyL - (1 - fy) * yH;
+
+            window.Plotly.relayout(gd, {
+                'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
+                'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
+            });
+        }, { passive: false });
+
+        gd.addEventListener('touchend', function (e) {
+            if (e.touches.length < 2) pinch = null;
+        }, { passive: false });
+        gd.addEventListener('touchcancel', function () { pinch = null; }, { passive: false });
+    }
+    attach();
+})();
+</script>
+</body>
+</html>
+"""
+
+    # iframe 높이: 모바일에서 충분히 크게(브라우저 폭으로는 분기할 수 없어 넉넉히 지정)
+    components.html(full_html, height=680, scrolling=False)
