@@ -217,8 +217,14 @@ else:
 <style>
     html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
     /* 차트가 iframe 영역을 꽉 채우고, 터치 제스처를 직접 처리 */
+    #chartWrap { position: relative; width: 100%; height: 100%; }
     #bollingerChart { width: 100%; height: 100%; touch-action: none; }
     .js-plotly-plot, .plot-container, .svg-container { width: 100% !important; height: 100% !important; }
+    /* 터치 제스처 전용 투명 오버레이 (모바일에서만 JS 로 활성화) */
+    #touchOverlay {
+        position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+        z-index: 10; background: transparent; touch-action: none; display: none;
+    }
     /* PC: 마우스 포인터를 윈도우 기본 화살표로 고정 (4방향 이동 커서 제거) */
     .js-plotly-plot .nsewdrag,
     .js-plotly-plot .nsdrag,
@@ -234,75 +240,135 @@ else:
 </style>
 </head>
 <body>
+<div id="chartWrap">
 """ + chart_div + """
+<div id="touchOverlay"></div>
+</div>
 <script>
 (function () {
     function dist(a, b) {
         var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
         return Math.sqrt(dx * dx + dy * dy);
     }
+
     function attach() {
         var gd = document.getElementById('bollingerChart');
-        if (!gd || !window.Plotly || !gd._fullLayout) { setTimeout(attach, 300); return; }
-        if (gd._pinchAttached) return;
-        gd._pinchAttached = true;
+        var ov = document.getElementById('touchOverlay');
+        if (!gd || !ov || !window.Plotly || !gd._fullLayout) { setTimeout(attach, 300); return; }
+        if (gd._touchReady) return;
+        gd._touchReady = true;
 
-        var pinch = null;
+        // 터치(coarse pointer) 기기에서만 오버레이로 직접 제스처 처리.
+        // PC(마우스/fine pointer)에서는 오버레이를 끄고 Plotly 기본 동작(휠 줌, 호버) 유지.
+        var isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        if (!isTouch) return;
+        ov.style.display = 'block';
 
-        // 캡처 단계(true)로 등록해 Plotly 내부 드래그 레이어(nsewdrag)보다 먼저 터치를 가로챈다.
-        // 두 손가락일 때만 가로채고, 한 손가락은 Plotly 의 팬(이동)이 동작하도록 통과시킨다.
-        gd.addEventListener('touchstart', function (e) {
-            if (e.touches.length !== 2) { pinch = null; return; }
+        var pts = {};         // 활성 포인터: id -> {x, y}
+        var mode = null;      // 'pan' | 'pinch'
+        var startDist = 0;
+        var lastX = 0, lastY = 0;          // pan 기준점(픽셀)
+        var base = null;      // 제스처 시작 시점의 축 범위(선형)
+
+        function axes() {
             var fl = gd._fullLayout;
-            var xa = fl.xaxis, ya = fl.yaxis;
-            if (!xa || !ya) return;
-            e.preventDefault();
-            e.stopPropagation();
-            pinch = {
-                startDist: dist(e.touches[0], e.touches[1]),
+            return { xa: fl.xaxis, ya: fl.yaxis };
+        }
+        function snapshot() {
+            var a = axes(), xa = a.xa, ya = a.ya;
+            base = {
+                xa: xa, ya: ya,
                 x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
-                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1]),
-                xa: xa, ya: ya
+                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1])
             };
-        }, { passive: false, capture: true });
+        }
 
-        gd.addEventListener('touchmove', function (e) {
-            if (!pinch || e.touches.length !== 2) return;
+        ov.addEventListener('pointerdown', function (e) {
+            ov.setPointerCapture(e.pointerId);
+            pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+            var ids = Object.keys(pts);
+            if (ids.length === 1) {
+                mode = 'pan';
+                lastX = e.clientX; lastY = e.clientY;
+                snapshot();
+            } else if (ids.length === 2) {
+                mode = 'pinch';
+                startDist = dist(pts[ids[0]], pts[ids[1]]);
+                snapshot();
+            }
             e.preventDefault();
-            e.stopPropagation();
-            var d = dist(e.touches[0], e.touches[1]);
-            if (d <= 0 || pinch.startDist <= 0) return;
-            var scale = pinch.startDist / d;            // >1 축소, <1 확대
-            scale = Math.max(0.05, Math.min(20, scale));
+        }, { passive: false });
 
+        ov.addEventListener('pointermove', function (e) {
+            if (!pts[e.pointerId]) return;
+            pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+            var ids = Object.keys(pts);
             var rect = gd.getBoundingClientRect();
-            var cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-            var cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            e.preventDefault();
 
-            var xa = pinch.xa, ya = pinch.ya;
-            var fx = (cx - rect.left - xa._offset) / xa._length;
-            var fy = (cy - rect.top - ya._offset) / ya._length;
-            fx = Math.max(0, Math.min(1, fx));
-            fy = Math.max(0, Math.min(1, fy));
+            if (mode === 'pan' && ids.length === 1 && base) {
+                var xa = base.xa, ya = base.ya;
+                var dxPix = e.clientX - lastX;
+                var dyPix = e.clientY - lastY;
+                var xPerPix = (base.x1 - base.x0) / xa._length;
+                var yPerPix = (base.y1 - base.y0) / ya._length;
+                var nx0 = base.x0 - dxPix * xPerPix;
+                var nx1 = base.x1 - dxPix * xPerPix;
+                var ny0 = base.y0 + dyPix * yPerPix;  // 화면 y는 아래로 증가
+                var ny1 = base.y1 + dyPix * yPerPix;
+                window.Plotly.relayout(gd, {
+                    'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
+                    'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
+                });
+            } else if (mode === 'pinch' && ids.length === 2 && base) {
+                var d = dist(pts[ids[0]], pts[ids[1]]);
+                if (d <= 0 || startDist <= 0) return;
+                var scale = startDist / d;             // >1 축소, <1 확대
+                scale = Math.max(0.05, Math.min(20, scale));
+                var cx = (pts[ids[0]].x + pts[ids[1]].x) / 2;
+                var cy = (pts[ids[0]].y + pts[ids[1]].y) / 2;
+                var xa = base.xa, ya = base.ya;
+                var fx = (cx - rect.left - xa._offset) / xa._length;
+                var fy = (cy - rect.top - ya._offset) / ya._length;
+                fx = Math.max(0, Math.min(1, fx));
+                fy = Math.max(0, Math.min(1, fy));
+                var xW = (base.x1 - base.x0) * scale;
+                var yH = (base.y1 - base.y0) * scale;
+                var cxL = base.x0 + fx * (base.x1 - base.x0);
+                var cyL = base.y1 - fy * (base.y1 - base.y0);
+                var nx0b = cxL - fx * xW, nx1b = cxL + (1 - fx) * xW;
+                var ny1b = cyL + fy * yH, ny0b = cyL - (1 - fy) * yH;
+                window.Plotly.relayout(gd, {
+                    'xaxis.range': [xa.l2r(nx0b), xa.l2r(nx1b)],
+                    'yaxis.range': [ya.l2r(ny0b), ya.l2r(ny1b)]
+                });
+            }
+        }, { passive: false });
 
-            var xW = (pinch.x1 - pinch.x0) * scale;
-            var yH = (pinch.y1 - pinch.y0) * scale;
-            var cxL = pinch.x0 + fx * (pinch.x1 - pinch.x0);
-            var cyL = pinch.y1 - fy * (pinch.y1 - pinch.y0);  // y는 위가 큰 값
+        function up(e) {
+            delete pts[e.pointerId];
+            try { ov.releasePointerCapture(e.pointerId); } catch (err) {}
+            var ids = Object.keys(pts);
+            if (ids.length === 0) { mode = null; }
+            else if (ids.length === 1) {
+                // 핀치 → 팬 전환: 남은 손가락 기준으로 다시 시작
+                mode = 'pan';
+                lastX = pts[ids[0]].x; lastY = pts[ids[0]].y;
+                snapshot();
+            }
+        }
+        ov.addEventListener('pointerup', up, { passive: false });
+        ov.addEventListener('pointercancel', up, { passive: false });
 
-            var nx0 = cxL - fx * xW,  nx1 = cxL + (1 - fx) * xW;
-            var ny1 = cyL + fy * yH,  ny0 = cyL - (1 - fy) * yH;
-
-            window.Plotly.relayout(gd, {
-                'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
-                'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
-            });
-        }, { passive: false, capture: true });
-
-        gd.addEventListener('touchend', function (e) {
-            if (e.touches.length < 2) pinch = null;
-        }, { passive: false, capture: true });
-        gd.addEventListener('touchcancel', function () { pinch = null; }, { passive: false, capture: true });
+        // 더블 탭 → 원래 보기로 리셋
+        var lastTap = 0;
+        ov.addEventListener('pointerup', function (e) {
+            var now = Date.now();
+            if (now - lastTap < 300 && Object.keys(pts).length === 0) {
+                window.Plotly.relayout(gd, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+            }
+            lastTap = now;
+        }, { passive: false });
     }
     attach();
 })();
