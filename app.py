@@ -219,6 +219,18 @@ else:
     /* 차트가 iframe 영역을 꽉 채우고, 터치 제스처를 직접 처리 */
     #bollingerChart { width: 100%; height: 100%; touch-action: none; }
     .js-plotly-plot, .plot-container, .svg-container { width: 100% !important; height: 100% !important; }
+    /* PC: 마우스 포인터를 윈도우 기본 화살표로 고정 (4방향 이동 커서 제거) */
+    .js-plotly-plot .nsewdrag,
+    .js-plotly-plot .nsdrag,
+    .js-plotly-plot .ewdrag,
+    .js-plotly-plot .nwdrag, .js-plotly-plot .nedrag,
+    .js-plotly-plot .swdrag, .js-plotly-plot .sedrag,
+    .js-plotly-plot .cursor-move,
+    .js-plotly-plot .cursor-crosshair,
+    .js-plotly-plot .cursor-ew-resize,
+    .js-plotly-plot .cursor-ns-resize,
+    .js-plotly-plot .dragcover,
+    .js-plotly-plot rect { cursor: default !important; }
 </style>
 </head>
 <body>
@@ -237,23 +249,27 @@ else:
 
         var pinch = null;
 
+        // 캡처 단계(true)로 등록해 Plotly 내부 드래그 레이어(nsewdrag)보다 먼저 터치를 가로챈다.
+        // 두 손가락일 때만 가로채고, 한 손가락은 Plotly 의 팬(이동)이 동작하도록 통과시킨다.
         gd.addEventListener('touchstart', function (e) {
             if (e.touches.length !== 2) { pinch = null; return; }
             var fl = gd._fullLayout;
             var xa = fl.xaxis, ya = fl.yaxis;
             if (!xa || !ya) return;
             e.preventDefault();
+            e.stopPropagation();
             pinch = {
                 startDist: dist(e.touches[0], e.touches[1]),
                 x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
                 y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1]),
                 xa: xa, ya: ya
             };
-        }, { passive: false });
+        }, { passive: false, capture: true });
 
         gd.addEventListener('touchmove', function (e) {
             if (!pinch || e.touches.length !== 2) return;
             e.preventDefault();
+            e.stopPropagation();
             var d = dist(e.touches[0], e.touches[1]);
             if (d <= 0 || pinch.startDist <= 0) return;
             var scale = pinch.startDist / d;            // >1 축소, <1 확대
@@ -281,12 +297,12 @@ else:
                 'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
                 'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
             });
-        }, { passive: false });
+        }, { passive: false, capture: true });
 
         gd.addEventListener('touchend', function (e) {
             if (e.touches.length < 2) pinch = null;
-        }, { passive: false });
-        gd.addEventListener('touchcancel', function () { pinch = null; }, { passive: false });
+        }, { passive: false, capture: true });
+        gd.addEventListener('touchcancel', function () { pinch = null; }, { passive: false, capture: true });
     }
     attach();
 })();
