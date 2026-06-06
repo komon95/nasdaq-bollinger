@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
 import plotly.graph_objects as go
 import pandas as pd
@@ -55,9 +54,7 @@ st.markdown("""
         .js-plotly-plot .ytick text {
             font-size: 15px !important;
         }
-        /* 손가락 핀치 줌 제스처를 차트가 가로채도록 (페이지 스크롤/줌 대신 차트 줌) */
-        .stPlotlyChart,
-        .js-plotly-plot,
+        /* 손가락 핀치 줌 제스처를 차트가 가로채도록 (페이지 스크롤 대신 차트 줌) */
         .js-plotly-plot .nsewdrag,
         .js-plotly-plot .draglayer,
         .js-plotly-plot .drag {
@@ -188,194 +185,13 @@ else:
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_upper, text=f"<b>{latest_upper:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
     fig.add_annotation(xref="paper", yref="y", x=1.0, y=latest_lower, text=f"<b>{latest_lower:,.2f}</b>", showarrow=False, xanchor="left", bgcolor="#00c49f", font=dict(color="white", size=13), borderpad=4)
 
-    # 차트가 iframe(컨테이너)을 꽉 채우도록 고정 높이를 제거하고 자동 크기 사용
-    fig.update_layout(height=None, autosize=True)
-
-    # [모바일 핀치 줌 핵심 해결]
-    # 차트를 '내가 완전히 제어하는 iframe' 안에 직접 렌더링한다.
-    # 이렇게 하면 같은 출처(same-origin)라 터치 이벤트를 자유롭게 가로채
-    # 두 손가락 핀치 확대/축소를 직접 구현할 수 있다.
-    # (Plotly 내장 scrollZoom 은 마우스 휠 기반이라 모바일 핀치를 처리하지 못함)
-    chart_div = fig.to_html(
-        include_plotlyjs="cdn",
-        full_html=False,
-        div_id="bollingerChart",
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
         config={
-            "scrollZoom": True,
-            "displayModeBar": False,
-            "responsive": True,
-            "doubleClick": "reset",
-        },
+            'scrollZoom': True,
+            'displayModeBar': False,
+            'responsive': True,        # 화면 크기 변경 시 차트 자동 재조정 (모바일 필수)
+            'doubleClick': 'reset',    # 더블탭/더블터치로 원래 뷰로 리셋
+        }
     )
-
-    full_html = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<style>
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-    /* 차트가 iframe 영역을 꽉 채우고, 터치 제스처를 직접 처리 */
-    #chartWrap { position: relative; width: 100%; height: 100%; }
-    #bollingerChart { width: 100%; height: 100%; touch-action: none; }
-    .js-plotly-plot, .plot-container, .svg-container { width: 100% !important; height: 100% !important; }
-    /* 터치 제스처 전용 투명 오버레이 (모바일에서만 JS 로 활성화) */
-    #touchOverlay {
-        position: absolute; left: 0; top: 0; width: 100%; height: 100%;
-        z-index: 10; background: transparent; touch-action: none; display: none;
-    }
-    /* PC: 마우스 포인터를 윈도우 기본 화살표로 고정 (4방향 이동 커서 제거) */
-    .js-plotly-plot .nsewdrag,
-    .js-plotly-plot .nsdrag,
-    .js-plotly-plot .ewdrag,
-    .js-plotly-plot .nwdrag, .js-plotly-plot .nedrag,
-    .js-plotly-plot .swdrag, .js-plotly-plot .sedrag,
-    .js-plotly-plot .cursor-move,
-    .js-plotly-plot .cursor-crosshair,
-    .js-plotly-plot .cursor-ew-resize,
-    .js-plotly-plot .cursor-ns-resize,
-    .js-plotly-plot .dragcover,
-    .js-plotly-plot rect { cursor: default !important; }
-</style>
-</head>
-<body>
-<div id="chartWrap">
-""" + chart_div + """
-<div id="touchOverlay"></div>
-</div>
-<script>
-(function () {
-    function dist(a, b) {
-        var dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-
-    function attach() {
-        var gd = document.getElementById('bollingerChart');
-        var ov = document.getElementById('touchOverlay');
-        if (!gd || !ov || !window.Plotly || !gd._fullLayout) { setTimeout(attach, 300); return; }
-        if (gd._touchReady) return;
-        gd._touchReady = true;
-
-        // 터치(coarse pointer) 기기에서만 오버레이로 직접 제스처 처리.
-        // PC(마우스/fine pointer)에서는 오버레이를 끄고 Plotly 기본 동작(휠 줌, 호버) 유지.
-        var isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-        if (!isTouch) return;
-        ov.style.display = 'block';
-
-        var pts = {};         // 활성 포인터: id -> {x, y}
-        var mode = null;      // 'pan' | 'pinch'
-        var startDist = 0;
-        var lastX = 0, lastY = 0;          // pan 기준점(픽셀)
-        var base = null;      // 제스처 시작 시점의 축 범위(선형)
-
-        function axes() {
-            var fl = gd._fullLayout;
-            return { xa: fl.xaxis, ya: fl.yaxis };
-        }
-        function snapshot() {
-            var a = axes(), xa = a.xa, ya = a.ya;
-            base = {
-                xa: xa, ya: ya,
-                x0: xa.r2l(xa.range[0]), x1: xa.r2l(xa.range[1]),
-                y0: ya.r2l(ya.range[0]), y1: ya.r2l(ya.range[1])
-            };
-        }
-
-        ov.addEventListener('pointerdown', function (e) {
-            ov.setPointerCapture(e.pointerId);
-            pts[e.pointerId] = { x: e.clientX, y: e.clientY };
-            var ids = Object.keys(pts);
-            if (ids.length === 1) {
-                mode = 'pan';
-                lastX = e.clientX; lastY = e.clientY;
-                snapshot();
-            } else if (ids.length === 2) {
-                mode = 'pinch';
-                startDist = dist(pts[ids[0]], pts[ids[1]]);
-                snapshot();
-            }
-            e.preventDefault();
-        }, { passive: false });
-
-        ov.addEventListener('pointermove', function (e) {
-            if (!pts[e.pointerId]) return;
-            pts[e.pointerId] = { x: e.clientX, y: e.clientY };
-            var ids = Object.keys(pts);
-            var rect = gd.getBoundingClientRect();
-            e.preventDefault();
-
-            if (mode === 'pan' && ids.length === 1 && base) {
-                var xa = base.xa, ya = base.ya;
-                var dxPix = e.clientX - lastX;
-                var dyPix = e.clientY - lastY;
-                var xPerPix = (base.x1 - base.x0) / xa._length;
-                var yPerPix = (base.y1 - base.y0) / ya._length;
-                var nx0 = base.x0 - dxPix * xPerPix;
-                var nx1 = base.x1 - dxPix * xPerPix;
-                var ny0 = base.y0 + dyPix * yPerPix;  // 화면 y는 아래로 증가
-                var ny1 = base.y1 + dyPix * yPerPix;
-                window.Plotly.relayout(gd, {
-                    'xaxis.range': [xa.l2r(nx0), xa.l2r(nx1)],
-                    'yaxis.range': [ya.l2r(ny0), ya.l2r(ny1)]
-                });
-            } else if (mode === 'pinch' && ids.length === 2 && base) {
-                var d = dist(pts[ids[0]], pts[ids[1]]);
-                if (d <= 0 || startDist <= 0) return;
-                var scale = startDist / d;             // >1 축소, <1 확대
-                scale = Math.max(0.05, Math.min(20, scale));
-                var cx = (pts[ids[0]].x + pts[ids[1]].x) / 2;
-                var cy = (pts[ids[0]].y + pts[ids[1]].y) / 2;
-                var xa = base.xa, ya = base.ya;
-                var fx = (cx - rect.left - xa._offset) / xa._length;
-                var fy = (cy - rect.top - ya._offset) / ya._length;
-                fx = Math.max(0, Math.min(1, fx));
-                fy = Math.max(0, Math.min(1, fy));
-                var xW = (base.x1 - base.x0) * scale;
-                var yH = (base.y1 - base.y0) * scale;
-                var cxL = base.x0 + fx * (base.x1 - base.x0);
-                var cyL = base.y1 - fy * (base.y1 - base.y0);
-                var nx0b = cxL - fx * xW, nx1b = cxL + (1 - fx) * xW;
-                var ny1b = cyL + fy * yH, ny0b = cyL - (1 - fy) * yH;
-                window.Plotly.relayout(gd, {
-                    'xaxis.range': [xa.l2r(nx0b), xa.l2r(nx1b)],
-                    'yaxis.range': [ya.l2r(ny0b), ya.l2r(ny1b)]
-                });
-            }
-        }, { passive: false });
-
-        function up(e) {
-            delete pts[e.pointerId];
-            try { ov.releasePointerCapture(e.pointerId); } catch (err) {}
-            var ids = Object.keys(pts);
-            if (ids.length === 0) { mode = null; }
-            else if (ids.length === 1) {
-                // 핀치 → 팬 전환: 남은 손가락 기준으로 다시 시작
-                mode = 'pan';
-                lastX = pts[ids[0]].x; lastY = pts[ids[0]].y;
-                snapshot();
-            }
-        }
-        ov.addEventListener('pointerup', up, { passive: false });
-        ov.addEventListener('pointercancel', up, { passive: false });
-
-        // 더블 탭 → 원래 보기로 리셋
-        var lastTap = 0;
-        ov.addEventListener('pointerup', function (e) {
-            var now = Date.now();
-            if (now - lastTap < 300 && Object.keys(pts).length === 0) {
-                window.Plotly.relayout(gd, { 'xaxis.autorange': true, 'yaxis.autorange': true });
-            }
-            lastTap = now;
-        }, { passive: false });
-    }
-    attach();
-})();
-</script>
-</body>
-</html>
-"""
-
-    # iframe 높이: 모바일에서 충분히 크게(브라우저 폭으로는 분기할 수 없어 넉넉히 지정)
-    components.html(full_html, height=680, scrolling=False)
